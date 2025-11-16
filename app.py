@@ -1,0 +1,296 @@
+import os, sqlite3, time
+from pathlib import Path
+from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory, jsonify
+from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+
+BASE_DIR = Path(__file__).parent
+DB = BASE_DIR / "jobportal.db"
+UPLOADS = BASE_DIR / "static/uploads"
+ALLOWED_EXT = {"pdf", "doc", "docx"}
+UPLOADS.mkdir(exist_ok=True, parents=True)
+
+app = Flask(__name__)
+app.secret_key = "hirex_secret"
+app.config["UPLOAD_FOLDER"] = str(UPLOADS)
+
+# Utility
+def get_db():
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# template filter
+@app.template_filter("split")
+def split_filter(s, d=","):
+    return s.split(d) if s else []
+
+# Auth decorators
+def login_required(f):
+    @wraps(f)
+    def wrap(*a, **kw):
+        if not session.get("user_id"):
+            flash("Login required", "warning")
+            return redirect(url_for("login"))
+        return f(*a, **kw)
+    return wrap
+
+def admin_required(f):
+    @wraps(f)
+    def wrap(*a, **kw):
+        if session.get("user_role") != "admin":
+            flash("Admin only", "danger")
+            return redirect(url_for("index"))
+        return f(*a, **kw)
+    return wrap
+
+@app.context_processor
+def inject_user():
+    return dict(current_user=session.get("username"), current_role=session.get("user_role"))
+
+# ---------- Job seeker ----------
+@app.route("/")
+def index():
+    q = request.args.get("q", "").strip()
+    location = request.args.get("location", "").strip()
+    conn = get_db()
+    try:
+        sql = "SELECT j.*, c.name company_name FROM jobs j LEFT JOIN companies c ON j.company_id=c.id WHERE j.is_active=1"
+        params = []
+        if q:
+            sql += " AND (j.title LIKE ? OR j.skills LIKE ? OR c.name LIKE ?)"
+            p = f"%{q}%"
+            params.extend([p, p, p])
+        if location:
+            sql += " AND j.location LIKE ?"
+            params.append(f"%{location}%")
+        sql += " ORDER BY j.post_date DESC"
+        jobs = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    return render_template("index.html", jobs=jobs, q=q, location=location)
+
+# Accept either /job/<int:id> or /job/<int:job_id>
+@app.route("/job/<int:id>")
+@app.route("/job/<int:job_id>")
+def job_detail(id=None, job_id=None):
+    # normalize parameter
+    job_id = job_id or id
+    conn = get_db()
+    try:
+        job = conn.execute(
+            "SELECT j.*, c.name as company_name, c.website FROM jobs j LEFT JOIN companies c ON j.company_id=c.id WHERE j.id=?",
+            (job_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not job:
+        flash("Job not found", "danger")
+        return redirect(url_for("index"))
+    return render_template("job_detail.html", job=job)
+
+# Accept /apply/<int:id> or /apply/<int:job_id>
+@app.route("/apply/<int:id>", methods=["POST"])
+def apply(id):
+    name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip()
+    phone = request.form.get("phone", "").strip()
+    cover = request.form.get("cover", "").strip()
+    resume = request.files.get("resume")
+    resume_path = None
+
+    if not name or not email:
+        flash("Please fill out your name and email.", "warning")
+        return redirect(url_for("job_detail", job_id=id))
+
+    # Resume handling
+    if resume and resume.filename:
+        ext = resume.filename.rsplit(".", 1)[-1].lower()
+        if ext in ALLOWED_EXT:
+            fname = secure_filename(f"{int(time.time())}_{resume.filename}")
+            target = UPLOADS / fname
+            resume.save(target)
+            resume_path = f"static/uploads/{fname}"
+        else:
+            flash("Invalid file format. Only PDF, DOC, DOCX allowed.", "danger")
+            return redirect(url_for("job_detail", job_id=id))
+
+    try:
+        conn = get_db()
+        conn.execute("""
+            INSERT INTO applications (job_id, applicant_name, email, phone, resume_path, cover_letter)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (id, name, email, phone, resume_path, cover))
+        conn.commit()
+        print(f"✅ Application inserted for job {id}: {name}, {email}")
+        flash("Application submitted successfully!", "success")
+    except Exception as e:
+        print("❌ Error inserting application:", e)
+        flash("Database error while applying.", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for("job_detail", job_id=id))
+
+# ---------- Auth ----------
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        u = request.form.get("username", "").strip()
+        e = request.form.get("email", "").strip()
+        p = request.form.get("password", "")
+        role = request.form.get("role", "seeker")
+        if not u or not e or not p:
+            flash("Please fill all fields", "warning")
+            return redirect(url_for("register"))
+        pw = generate_password_hash(p)
+        conn = get_db()
+        try:
+            conn.execute("INSERT INTO users(username,email,password_hash,role) VALUES(?,?,?,?)", (u, e, pw, role))
+            conn.commit()
+            flash("Registration successful!", "success")
+            return redirect(url_for("login"))
+        except sqlite3.IntegrityError:
+            flash("User exists", "danger")
+        finally:
+            conn.close()
+    return render_template("register.html")
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        ident = request.form.get("ident", "").strip()
+        pw = request.form.get("password", "")
+        conn = get_db()
+        try:
+            user = conn.execute("SELECT * FROM users WHERE username=? OR email=?", (ident, ident)).fetchone()
+        finally:
+            conn.close()
+        if user and check_password_hash(user["password_hash"], pw):
+            session.update({"user_id": user["id"], "username": user["username"], "user_role": user["role"]})
+            flash("Welcome back!", "success")
+            return redirect(url_for("admin_dashboard") if user["role"] == "admin" else url_for("index"))
+        flash("Invalid credentials", "danger")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("Logged out", "info")
+    return redirect(url_for("index"))
+
+# ---------- Admin ----------
+@app.route("/admin")
+@admin_required
+def admin_dashboard():
+    conn = get_db()
+    try:
+        total_jobs = conn.execute("SELECT COUNT(*) as c FROM jobs").fetchone()["c"]
+        active_jobs = conn.execute("SELECT COUNT(*) as c FROM jobs WHERE is_active=1").fetchone()["c"]
+        total_apps = conn.execute("SELECT COUNT(*) as c FROM applications").fetchone()["c"]
+        jobs = conn.execute("SELECT j.*, c.name as company_name FROM jobs j LEFT JOIN companies c ON j.company_id=c.id ORDER BY j.post_date DESC").fetchall()
+    finally:
+        conn.close()
+    return render_template("admin/dashboard.html", total_jobs=total_jobs, active_jobs=active_jobs, total_apps=total_apps, jobs=jobs)
+
+@app.route("/admin/job/new", methods=["GET", "POST"])
+@admin_required
+def admin_new_job():
+    conn = get_db()
+    try:
+        companies = conn.execute("SELECT * FROM companies").fetchall()
+        if request.method == "POST":
+            f = request.form
+            conn.execute("""INSERT INTO jobs(title,company_id,location,job_type,experience_level,salary_range,description,skills,posted_by)
+                            VALUES(?,?,?,?,?,?,?,?,?)""",
+                         (f.get("title"), f.get("company_id") or None, f.get("location"), f.get("job_type"), f.get("experience_level"), f.get("salary_range"), f.get("description"), f.get("skills"), session.get("user_id")))
+            conn.commit()
+            flash("Job posted!", "success")
+            return redirect(url_for("admin_dashboard"))
+    finally:
+        conn.close()
+    return render_template("admin/job_form.html", companies=companies)
+
+# alias for templates that call admin_create_job
+def admin_create_job():
+    return admin_new_job()
+
+@app.route("/admin/job/<int:id>/edit", methods=["GET", "POST"])
+@app.route("/admin/job/<int:job_id>/edit", methods=["GET", "POST"])
+@admin_required
+def admin_edit_job(id=None, job_id=None):
+    job_id = job_id or id
+    conn = get_db()
+    try:
+        job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        comps = conn.execute("SELECT * FROM companies").fetchall()
+        if request.method == "POST":
+            f = request.form
+            conn.execute("""UPDATE jobs SET title=?,company_id=?,location=?,job_type=?,experience_level=?,salary_range=?,description=?,skills=? WHERE id=?""",
+                         (f.get("title"), f.get("company_id") or None, f.get("location"), f.get("job_type"), f.get("experience_level"), f.get("salary_range"), f.get("description"), f.get("skills"), job_id))
+            conn.commit()
+            flash("Job updated", "success")
+            return redirect(url_for("admin_dashboard"))
+    finally:
+        conn.close()
+    return render_template("admin/job_form.html", job=job, companies=comps)
+
+@app.route("/admin/job/<int:id>/delete", methods=["POST"])
+@app.route("/admin/job/<int:job_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_job(id=None, job_id=None):
+    job_id = job_id or id
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    flash("Deleted job", "info")
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/admin/companies", methods=["GET", "POST"])
+@admin_required
+def admin_companies():
+    conn = get_db()
+    try:
+        if request.method == "POST":
+            name = request.form.get("name")
+            website = request.form.get("website")
+            desc = request.form.get("description")
+            conn.execute("INSERT INTO companies(name,website,description) VALUES(?,?,?)", (name, website, desc))
+            conn.commit()
+        comps = conn.execute("SELECT * FROM companies").fetchall()
+    finally:
+        conn.close()
+    return render_template("admin/company_list.html", companies=comps)
+
+@app.route("/admin/applications")
+@admin_required
+def admin_apps():
+    conn = get_db()
+    try:
+        apps = conn.execute("""SELECT a.*, j.title job_title FROM applications a LEFT JOIN jobs j ON j.id=a.job_id ORDER BY applied_at DESC""").fetchall()
+    finally:
+        conn.close()
+    return render_template("admin/applications.html", apps=apps)
+
+# optional: provide chart data for admin dashboard if templates use it
+@app.route("/admin/chart-data")
+@admin_required
+def admin_chart_data():
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT j.title, COUNT(a.id) as cnt FROM jobs j LEFT JOIN applications a ON j.id=a.job_id GROUP BY j.id ORDER BY cnt DESC LIMIT 6").fetchall()
+        labels = [r["title"] for r in rows]
+        appsCount = [r["cnt"] for r in rows]
+        comp = conn.execute("SELECT c.name, COUNT(j.id) as cnt FROM companies c LEFT JOIN jobs j ON c.id=j.company_id GROUP BY c.id ORDER BY cnt DESC LIMIT 6").fetchall()
+        compLabels = [r["name"] for r in comp]
+        compCounts = [r["cnt"] for r in comp]
+    finally:
+        conn.close()
+    return jsonify({"labels": labels, "appsCount": appsCount, "compLabels": compLabels, "compCounts": compCounts})
+
+if __name__ == "__main__":
+    app.run(debug=True)
