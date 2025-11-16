@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>Applications</h3>
+<table class="table table-striped">
+  <thead><tr><th>Applicant</th><th>Email</th><th>Phone</th><th>Job</th><th>Date</th><th>Resume</th></tr></thead>
+  <tbody>
+    {% for a in apps %}
+      <tr>
+        <td>{{ a.applicant_name }}</td>
+        <td>{{ a.email }}</td>
+        <td>{{ a.phone }}</td>
+        <td><a href="{{ url_for('job_detail', job_id=a.job_id) }}">{{ a.job_title }}</a></td>
+        <td>{{ a.applied_at }}</td>
+        <td>
+          {% if a.resume_path %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_download_resume', app_id=a.id) }}">Download</a>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
