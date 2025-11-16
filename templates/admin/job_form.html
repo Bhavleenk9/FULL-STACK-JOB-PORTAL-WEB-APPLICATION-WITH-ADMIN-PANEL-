@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>{% if job %}Edit Job{% else %}Post Job{% endif %}</h3>
+<form method="post">
+  <div class="mb-2"><label class="form-label">Title</label><input name="title" class="form-control" value="{{ job.title if job }}"></div>
+  <div class="mb-2"><label class="form-label">Company</label>
+    <select name="company_id" class="form-select">
+      <option value="">-- Select Company --</option>
+      {% for c in companies %}
+        <option value="{{ c.id }}" {% if job and job.company_id==c.id %}selected{% endif %}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="mb-2"><label class="form-label">Location</label><input name="location" class="form-control" value="{{ job.location if job }}"></div>
+  <div class="row">
+    <div class="col-md-4 mb-2"><label class="form-label">Type</label><input name="job_type" class="form-control" value="{{ job.job_type if job }}"></div>
+    <div class="col-md-4 mb-2"><label class="form-label">Experience</label><input name="experience_level" class="form-control" value="{{ job.experience_level if job }}"></div>
+    <div class="col-md-4 mb-2"><label class="form-label">Salary</label><input name="salary_range" class="form-control" value="{{ job.salary_range if job }}"></div>
+  </div>
+  <div class="mb-2"><label class="form-label">Skills (comma separated)</label><input name="skills" class="form-control" value="{{ job.skills if job }}"></div>
+  <div class="mb-2"><label class="form-label">Description</label><textarea name="description" class="form-control" rows="6">{{ job.description if job }}</textarea></div>
+  <div class="mb-2 form-check"><input type="checkbox" name="is_active" class="form-check-input" id="active" {% if job and job.is_active %}checked{% endif %}><label class="form-check-label" for="active">Active</label></div>
+  <button class="btn btn-primary">{% if job %}Update{% else %}Create{% endif %}</button>
+</form>
+{% endblock %}
+

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>Companies</h3>
+<form method="post" enctype="multipart/form-data" class="row g-2 mb-3">
+  <div class="col-md-4"><input name="name" class="form-control" placeholder="Company name" required></div>
+  <div class="col-md-4"><input name="website" class="form-control" placeholder="Website (optional)"></div>
+  <div class="col-md-4"><input name="logo" type="file" class="form-control"></div>
+  <div class="col-12">
+    <textarea name="description" class="form-control" placeholder="Short description"></textarea>
+  </div>
+  <div class="col-12"><button class="btn btn-success">Create company</button></div>
+</form>
+
+<table class="table">
+  <thead><tr><th>Name</th><th>Website</th><th>Created</th></tr></thead>
+  <tbody>
+    {% for c in companies %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td>{% if c.website %}<a href="{{ c.website }}" target="_blank">{{ c.website }}</a>{% endif %}</td>
+        <td>{{ c.created_at }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

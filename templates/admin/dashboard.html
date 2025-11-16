@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard — HireX{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <h2 class="fw-bold mb-4">Admin Dashboard</h2>
+
+  <!-- Summary Cards -->
+  <div class="row text-center mb-4">
+    <div class="col-md-3 mb-3">
+      <div class="card shadow-sm p-3">
+        <h5 class="fw-bold mb-1 text-primary">Total Jobs</h5>
+        <h3 class="fw-bold">{{ total_jobs }}</h3>
+      </div>
+    </div>
+    <div class="col-md-3 mb-3">
+      <div class="card shadow-sm p-3">
+        <h5 class="fw-bold mb-1 text-success">Active Jobs</h5>
+        <h3 class="fw-bold">{{ active_jobs }}</h3>
+      </div>
+    </div>
+    <div class="col-md-3 mb-3">
+      <div class="card shadow-sm p-3">
+        <h5 class="fw-bold mb-1 text-warning">Applications</h5>
+        <h3 class="fw-bold">{{ total_apps }}</h3>
+      </div>
+    </div>
+    <div class="col-md-3 mb-3">
+      <div class="card shadow-sm p-3">
+        <h5 class="fw-bold mb-1 text-info">Companies</h5>
+        <h3 class="fw-bold">{{ jobs|length }}</h3>
+      </div>
+    </div>
+  </div>
+
+  <!-- Job Management -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold">Manage Jobs</h4>
+<a href="{{ url_for('admin_new_job') }}" class="btn btn-gradient btn-sm">+ Add New Job</a>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-striped align-middle shadow-sm">
+      <thead class="table-dark">
+        <tr>
+          <th>ID</th>
+          <th>Title</th>
+          <th>Company</th>
+          <th>Location</th>
+          <th>Type</th>
+          <th>Experience</th>
+          <th>Active</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td>{{ job.id }}</td>
+          <td>{{ job.title }}</td>
+          <td>{{ job.company_name }}</td>
+          <td>{{ job.location }}</td>
+          <td>{{ job.job_type }}</td>
+          <td>{{ job.experience_level }}</td>
+          <td>
+            {% if job.is_active %}
+              <span class="badge bg-success">Yes</span>
+            {% else %}
+              <span class="badge bg-danger">No</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{{ url_for('admin_edit_job', id=job.id) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+            <form action="{{ url_for('admin_delete_job', id=job.id) }}" method="POST">
+              <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this job?')">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-center py-3">No jobs found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Chart Section -->
+  <div class="mt-5">
+    <h4 class="fw-bold mb-3">Statistics</h4>
+    <div class="row">
+      <div class="col-md-6">
+        <canvas id="applicationsChart"></canvas>
+      </div>
+      <div class="col-md-6">
+        <canvas id="companiesChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+fetch("{{ url_for('admin_chart_data') }}")
+  .then(res => res.json())
+  .then(data => {
+    const ctx1 = document.getElementById("applicationsChart");
+    new Chart(ctx1, {
+      type: "bar",
+      data: {
+        labels: data.labels,
+        datasets: [{
+          label: "Applications per Job",
+          data: data.appsCount,
+          backgroundColor: "#0dcaf0"
+        }]
+      }
+    });
+
+    const ctx2 = document.getElementById("companiesChart");
+    new Chart(ctx2, {
+      type: "doughnut",
+      data: {
+        labels: data.compLabels,
+        datasets: [{
+          data: data.compCounts,
+          backgroundColor: ["#6610f2", "#198754", "#dc3545", "#fd7e14", "#0dcaf0"]
+        }]
+      }
+    });
+  });
+</script>
+{% endblock %}
